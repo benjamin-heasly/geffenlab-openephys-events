@@ -4,6 +4,9 @@ from typing import Optional, Sequence
 import logging
 from pathlib import Path
 
+from open_ephys.analysis import Session
+import numpy as np
+
 
 def set_up_logging():
     logging.basicConfig(
@@ -13,14 +16,62 @@ def set_up_logging():
     )
 
 
+def save_event_times(
+    save_as: Path,
+    event_times: np.ndarray,
+    fmt: str = '%.6f',
+    newline: str = '\n'
+):
+    """Save event times as one float in seconds per line -- same as CatGT and expected by our other steps."""
+    np.savetxt(save_as, event_times.squeeze(), fmt=fmt, newline=newline)
+
+
 def capsule_main(
     data_path: Path,
     results_path: Path,
     oebin_pattern: str,
 ):
-    logging.info("Exporting Open Ephys TTL events to .txt.\n")
+    logging.info("Exporting Open Ephys TTL events to text.\n")
 
-    logging.warning("WIP...")
+    oebin_paths = list(data_path.glob(oebin_pattern))
+    if not oebin_paths:
+        raise ValueError(f"No structure.oebin found within {data_path}, using pattern {oebin_pattern}.")
+
+    oebin_path = oebin_paths[0]
+    logging.info(f"Found structure.oebin: {oebin_path}")
+
+    session_dir = oebin_path.parent.parent.parent.parent
+    logging.info(f"Using Open Ephys session dir: {session_dir}")
+
+    session = Session(session_dir)
+    logging.info(f"Loaded Open Ephys session: {session}")
+
+    for record_node_index, record_node in enumerate(session.session.recordnodes):
+        logging.info(f"Extracting events from record node: {record_node}")
+        for recording_index, recording in enumerate(session.recordings):
+            logging.info(f"Extracting events from recording: {recording}")
+
+            logging.info(f"Loading TTL events dataframe.")
+            events_dataframe = recording.events
+
+            event_timestamps = events_dataframe['timestamp']
+            event_on_selector = events_dataframe['state'] == 1
+            event_streams = events_dataframe['stream_name']
+            event_lines = events_dataframe['line']
+            for event_stream in np.unique(event_streams):
+                logging.info(f"Extracting from event stream {event_stream}.")
+                event_stream_selector = event_streams == event_stream
+
+                for event_line in np.unique(event_lines):
+                    logging.info(f"Extracting ON events from line {event_line}.")
+                    event_line_selector = event_lines == event_line
+                    timestamps = event_timestamps[event_on_selector & event_stream_selector & event_line_selector]
+
+                    line_output_path = Path(results_path, f"{session_dir.stem}-node-{record_node_index}-rec-{recording_index}-{event_stream}-line-{event_line}.txt")
+                    logging.info(f"Writing events to {line_output_path}")
+                    line_output_path.parent.mkdir(exist_ok=True, parents=True)
+                    save_event_times(line_output_path, timestamps)
+
 
     logging.info("OK\n")
 
